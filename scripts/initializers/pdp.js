@@ -8,8 +8,10 @@ import {
   fetchPlaceholders,
   getOptionsUIDsFromUrl,
   getProductSku,
+  IS_UE,
   loadErrorPage,
   preloadFile,
+  QUICK_ORDER_PATH,
 } from '../commerce.js';
 import { getMetadata } from '../aem.js';
 
@@ -72,6 +74,25 @@ function preloadPDPAssets() {
 }
 
 await initializeDropin(async () => {
+  /**
+   * The Quick Order Drop-in reuses PDP containers but requires
+   * a simplified initialization without extra business logic
+   */
+  if (window.location.pathname === QUICK_ORDER_PATH) {
+    // Inherit Fetch GraphQL Instance (Catalog Service)
+    setEndpoint(CS_FETCH_GRAPHQL);
+
+    const labels = await fetchPlaceholders('placeholders/pdp.json');
+    const langDefinitions = {
+      default: {
+        ...labels,
+      },
+    };
+
+    // Initialize Quick Order
+    return initializers.mountImmediately(initialize, { langDefinitions });
+  }
+
   // Inherit Fetch GraphQL Instance (Catalog Service)
   setEndpoint(CS_FETCH_GRAPHQL);
 
@@ -81,6 +102,11 @@ await initializeDropin(async () => {
   // Fetch product data
   const sku = getProductSku();
   const optionsUIDs = getOptionsUIDsFromUrl();
+
+  // If we cannot find a sku, and we are not in UE, there's a problem.
+  if (!sku && !IS_UE) {
+    return loadErrorPage();
+  }
 
   const getProductData = async (skipTransform) => {
     const data = await fetchProductData(sku, { optionsUIDs, skipTransform })
@@ -92,10 +118,6 @@ await initializeDropin(async () => {
     getProductData(true),
     fetchPlaceholders('placeholders/pdp.json'),
   ]);
-
-  if (!product?.sku) {
-    return loadErrorPage();
-  }
 
   const langDefinitions = {
     default: {

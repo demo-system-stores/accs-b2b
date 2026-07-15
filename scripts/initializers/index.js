@@ -2,9 +2,13 @@
 import { getCookie } from '@dropins/tools/lib.js';
 import { events } from '@dropins/tools/event-bus.js';
 import { initializers } from '@dropins/tools/initializer.js';
-import { getConfigValue } from '@dropins/tools/lib/aem/configs.js';
 import { isAemAssetsEnabled } from '@dropins/tools/lib/aem/assets.js';
+import { getConfigValue, getRootPath } from '@dropins/tools/lib/aem/configs.js';
 import { CORE_FETCH_GRAPHQL, CS_FETCH_GRAPHQL, fetchPlaceholders } from '../commerce.js';
+
+const DROPIN_WEBSITE_COOKIE = 'dropin_website_path';
+const getWebsitePath = () => getRootPath() || '/';
+const clearCookie = (name) => { document.cookie = `${name}=; path=/; Max-Age=0`; };
 
 export const getUserTokenCookie = () => getCookie('auth_dropin_user_token');
 
@@ -16,6 +20,7 @@ const setAuthHeaders = (state) => {
   } else {
     sessionStorage.removeItem('DROPIN__COMPANYSWITCHER__COMPANY__CONTEXT');
     sessionStorage.removeItem('DROPIN__COMPANYSWITCHER__GROUP__CONTEXT');
+    CORE_FETCH_GRAPHQL.removeFetchGraphQlHeader('X-Adobe-Company');
     CORE_FETCH_GRAPHQL.removeFetchGraphQlHeader('Authorization');
     CS_FETCH_GRAPHQL.removeFetchGraphQlHeader('Authorization');
   }
@@ -23,6 +28,14 @@ const setAuthHeaders = (state) => {
 
 const setCustomerGroupHeader = (customerGroupId) => {
   CS_FETCH_GRAPHQL.setFetchGraphQlHeader('Magento-Customer-Group', customerGroupId);
+};
+
+const setAdobeCommerceOptimizerHeader = (adobeCommerceOptimizer) => {
+  if (adobeCommerceOptimizer?.priceBookId) {
+    CS_FETCH_GRAPHQL.setFetchGraphQlHeader('AC-Price-Book-ID', adobeCommerceOptimizer.priceBookId);
+  } else {
+    CS_FETCH_GRAPHQL.removeFetchGraphQlHeader('AC-Price-Book-ID');
+  }
 };
 
 const persistCartDataInSession = (data) => {
@@ -50,7 +63,24 @@ const setupAemAssetsImageParams = () => {
 export default async function initializeDropins() {
   const init = async () => {
     // Set Customer-Group-ID header
-    events.on('auth/group-uid', setCustomerGroupHeader, { eager: true });
+    if (getConfigValue('adobe-commerce-optimizer')) {
+      events.on('auth/adobe-commerce-optimizer', setAdobeCommerceOptimizerHeader, { eager: true });
+    } else {
+      events.on('auth/group-uid', setCustomerGroupHeader, { eager: true });
+    }
+
+    // Clear cart state when switching between websites to avoid stale cart IDs
+    // and authentication state from a different website causing errors.
+    const storedWebsitePath = getCookie(DROPIN_WEBSITE_COOKIE);
+    const currentWebsitePath = getWebsitePath();
+    if (storedWebsitePath && storedWebsitePath !== currentWebsitePath) {
+      clearCookie('DROPIN__CART__CART-ID');
+      sessionStorage.removeItem('DROPINS_CART_ID');
+      sessionStorage.removeItem('DROPIN__CART__CART__DATA');
+      sessionStorage.removeItem('DROPIN__CART__SHIPPING__DATA');
+      localStorage.removeItem('DROPIN__CART__CART__AUTHENTICATED');
+    }
+    document.cookie = `${DROPIN_WEBSITE_COOKIE}=${currentWebsitePath}; path=/`;
 
     // Set auth headers on authenticated event
     events.on('authenticated', setAuthHeaders, { eager: true });
@@ -72,18 +102,63 @@ export default async function initializeDropins() {
     // Fetch global placeholders
     await fetchPlaceholders('placeholders/global.json');
 
+    /**
+     * Persist sessionStorage across tabs via localStorage proxy
+     * This ensures that the company context is available in all tabs
+     * and that the company context is not lost when the tab is closed
+     * or the browser is closed.
+     */
+    const SYNC_KEYS = [
+      'DROPIN__COMPANYSWITCHER__COMPANY__CONTEXT',
+      'DROPIN__COMPANYSWITCHER__GROUP__CONTEXT',
+    ];
+
+    SYNC_KEYS.forEach((key) => {
+      const sessionValue = sessionStorage.getItem(key);
+      if (sessionValue) {
+        // Session has value — mirror it to localStorage for other tabs
+        localStorage.setItem(key, sessionValue);
+      } else {
+        // Session is empty (new tab) — restore from localStorage if available
+        const localValue = localStorage.getItem(key);
+        if (localValue) {
+          sessionStorage.setItem(key, localValue);
+        }
+      }
+    });
+
+    // Sync cross-tab changes in localStorage to sessionStorage
+    window.addEventListener('storage', (event) => {
+      if (event.key && SYNC_KEYS.includes(event.key)) {
+        if (event.newValue === null) {
+          sessionStorage.removeItem(event.key);
+        } else {
+          sessionStorage.setItem(event.key, event.newValue);
+        }
+      }
+    });
+
     /*
      * Set the company context before initializing the auth drop-in
      * This ensures proper permissions are retrieved, and the auth/permissions event includes
      * the correct payload.
      */
     const companyContext = sessionStorage.getItem('DROPIN__COMPANYSWITCHER__COMPANY__CONTEXT');
-    if (companyContext) {
+    if (token && companyContext) {
       CORE_FETCH_GRAPHQL.setFetchGraphQlHeader('X-Adobe-Company', companyContext);
     }
 
     // Initialize Global Drop-ins
     await import('./auth.js');
+
+    // Clear company context from localStorage when not authenticated
+    events.on('authenticated', (isAuthenticated) => {
+      if (!isAuthenticated) {
+        SYNC_KEYS.forEach((key) => {
+          localStorage.removeItem(key);
+        });
+      }
+    }, { eager: true });
 
     // Initialize Company Switcher
     const authenticated = events.lastPayload('authenticated');

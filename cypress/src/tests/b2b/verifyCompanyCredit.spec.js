@@ -377,8 +377,13 @@ describe('USF-2563: Company Credit (Optimized Journey)', { tags: ['@B2BSaas'] },
       cy.visit('/customer/company/credit');
       cy.wait(3000);
 
-      // Verify "Purchased" record appears
-      cy.contains(/purchas|order/i, { timeout: 15000 }).should('be.visible');
+      // Verify "Purchased" record appears - scoped to block to avoid matching nav links
+      // Uses /purchas|order/i in case the dropin renders the record type as "Order" vs "Purchased"
+      cy.get('.commerce-company-credit', { timeout: 15000 })
+        .should('be.visible')
+        .within(() => {
+          cy.contains(/purchas|order/i, { timeout: 15000 }).should('be.visible');
+        });
       cy.logToTerminal('✅ TC-47 CASE_1: Purchase record verified in credit history');
 
       // ========== TC-47 CASE_5: Refund (invoice + credit memo, credit restored) ==========
@@ -428,7 +433,7 @@ describe('USF-2563: Company Credit (Optimized Journey)', { tags: ['@B2BSaas'] },
       const checkForRefund = () => {
         refundAttempt++;
         cy.logToTerminal(`🔍 Attempt ${refundAttempt}/${maxRefundRetries}: Checking for Refunded record...`);
-        
+
         cy.visit('/customer/company/credit');
         cy.wait(3000);
 
@@ -451,7 +456,7 @@ describe('USF-2563: Company Credit (Optimized Journey)', { tags: ['@B2BSaas'] },
       // ========== TC-47 CASE_4: Revert (cancel order, credit restored) ==========
       // Need a SECOND order for cancel/revert since we just refunded the first one
       cy.logToTerminal('--- STEP 3: TC-47 CASE_4 - Place second order and cancel it (revert) ---');
-      
+
       // Add product to cart for second order (EXACT SAME FLOW AS FIRST ORDER)
       cy.logToTerminal('🛒 Adding product to cart for second order');
       cy.visit('/products/youth-tee/ADB150');
@@ -577,21 +582,21 @@ describe('USF-2563: Company Credit (Optimized Journey)', { tags: ['@B2BSaas'] },
         if (orderNumber2 && orderNumber2 !== 'unknown') {
           try {
             cy.logToTerminal(`🚫 Cancelling order: ${orderNumber2}`);
-            
+
             // Get order entity_id from increment_id
             const order = await getOrderByIncrementId(orderNumber2);
             const orderId = order.entity_id;
             cy.logToTerminal(`✅ Found order entity_id: ${orderId} for increment_id: ${orderNumber2}`);
-            
+
             // Cancel using entity_id
             await cancelOrder(orderId);
             cy.logToTerminal(`✅ Order ${orderNumber2} cancelled successfully`);
-            
+
             // Verify "Reverted" record in credit history
             cy.logToTerminal('📊 Verifying Reverted record in credit history...');
             cy.visit('/customer/company/credit');
             cy.wait(2000);
-            
+
             cy.contains(/revert/i, { timeout: 10000 }).should('be.visible');
             cy.logToTerminal('✅ TC-47 CASE_4: Reverted record verified');
           } catch (error) {
