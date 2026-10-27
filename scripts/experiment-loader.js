@@ -49,6 +49,8 @@ export async function showExperimentationRail(document, config) {
   try {
     const { loadLazy } = await import('../plugins/experimentation/src/index.js');
     await loadLazy(document, config);
+    // DA authoring: handler registers its own Sidekick listeners and self-disables on prod
+    await import('../tools/sidekick/aem-experimentation.js');
     return true;
   } catch (error) {
     // eslint-disable-next-line no-console

@@ -1,0 +1,16 @@
+{
+  "project": "accs-b2b",
+  "plugins": [
+    {
+      "id": "aem-experimentation",
+      "titleI18n": {
+        "en": "Experimentation"
+      },
+      "environments": [
+        "preview",
+        "live"
+      ],
+      "event": "aem-experimentation-sidekick"
+    }
+  ]
+}
